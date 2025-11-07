@@ -52,23 +52,15 @@ class NetworkParams(BaseModel):
 
 @app.on_event("startup")
 def load_artifacts() -> None:
-    """Load the trained model and scaler into app.state on startup."""
+    """Load the trained model into app.state on startup."""
     root = Path(__file__).resolve().parent
     model_path = root / "ML_MODEL" / "fault_prediction_model.pkl"
-    scaler_path = root / "ML_MODEL" / "scaler.pkl"
 
     try:
         app.state.model = joblib.load(model_path)
     except Exception as e:
-        # Store error so we can surface a helpful message later
         app.state.model = None
         app.state.model_load_error = RuntimeError(f"Failed to load model from {model_path}: {e}")
-
-    try:
-        app.state.scaler = joblib.load(scaler_path)
-    except Exception as e:
-        app.state.scaler = None
-        app.state.scaler_load_error = RuntimeError(f"Failed to load scaler from {scaler_path}: {e}")
 
     # Determine expected feature names
     expected = None
@@ -79,13 +71,12 @@ def load_artifacts() -> None:
         except Exception:
             expected = None
     if expected is None:
-        # Try project root
+        # Try feature list files
         try:
             feat_path = root / "feature_list.pkl"
             expected = joblib.load(feat_path)
         except Exception:
             expected = None
-        # Try ML_MODEL folder as fallback
         if expected is None:
             try:
                 feat_path2 = root / "ML_MODEL" / "feature_list.pkl"
@@ -97,19 +88,12 @@ def load_artifacts() -> None:
 
 @app.get("/")
 def health() -> dict:
-    """Basic health endpoint that also reports artifact load status."""
-    status = {
+    """Basic health endpoint that reports model load status."""
+    return {
+        "status": "ok",
         "model_loaded": getattr(app.state, "model", None) is not None,
-        "scaler_loaded": getattr(app.state, "scaler", None) is not None,
         "expected_feature_count": len(getattr(app.state, "expected_features", []) or []),
-        "scaler_feature_count": getattr(getattr(app.state, "scaler", None), "n_features_in_", None),
-        "scaler_compatible": (
-            (getattr(app.state, "expected_features", None) is not None)
-            and (getattr(getattr(app.state, "scaler", None), "n_features_in_", None) 
-                 == len(getattr(app.state, "expected_features", []) or []))
-        ),
     }
-    return {"status": "ok", **status}
 
 
 @app.post("/predict")
@@ -118,17 +102,11 @@ def predict(params: NetworkParams) -> dict:
     Accepts network parameters and returns the prediction label: "Normal" or "Faulty".
     """
     model = getattr(app.state, "model", None)
-    scaler = getattr(app.state, "scaler", None)
     expected_features = getattr(app.state, "expected_features", None)
 
     if model is None:
         err = getattr(app.state, "model_load_error", None)
         detail = str(err) if err else "Model is not loaded."
-        raise HTTPException(status_code=500, detail=detail)
-
-    if scaler is None:
-        err = getattr(app.state, "scaler_load_error", None)
-        detail = str(err) if err else "Scaler is not loaded."
         raise HTTPException(status_code=500, detail=detail)
 
     # Map API fields to training feature names
@@ -157,7 +135,7 @@ def predict(params: NetworkParams) -> dict:
         if v is not None:
             features[k] = v
 
-    # Engineered features (compute when possible)
+    # Engineered features
     try:
         if "efficiency_score" not in features:
             features["efficiency_score"] = features["throughput_mbps"] / (features["latency_ms"] + 1)
@@ -169,7 +147,6 @@ def predict(params: NetworkParams) -> dict:
             if cpu is not None and users is not None:
                 features["network_load_factor"] = users / (cpu + 1)
     except Exception:
-        # If engineered feature computation fails, we'll fill defaults below
         pass
 
     # Build DataFrame and align columns to expected features if available
@@ -180,19 +157,10 @@ def predict(params: NetworkParams) -> dict:
                 input_df[col] = 0.0
         input_df = input_df[expected_features]
     else:
-        # Fallback: use whatever features we have in deterministic order
         input_df = input_df.reindex(sorted(input_df.columns), axis=1)
 
-    # Decide whether to use scaler based on compatibility
-    n_expected = len(expected_features or [])
-    scaler_n = getattr(scaler, "n_features_in_", None)
-    use_scaler = scaler is not None and scaler_n is not None and scaler_n == n_expected
-
     try:
-        if use_scaler:
-            X_in = scaler.transform(input_df.values)
-        else:
-            X_in = input_df.values
+        X_in = input_df.values
         y_pred = model.predict(X_in)
 
         prob_faulty = None
@@ -204,15 +172,16 @@ def predict(params: NetworkParams) -> dict:
             df = model.decision_function(X_in)
             try:
                 from math import exp
-                s = 1.0 / (1.0 + exp(-float(df[0])))
-                prob_faulty = s
+                prob_faulty = 1.0 / (1.0 + exp(-float(df[0])))
             except Exception:
                 prob_faulty = None
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {e}")
-
-    label: Literal["Normal", "Faulty"] = "Faulty" if int(y_pred[0]) == 1 else "Normal"
+    
+    label: Literal["Normal", "Faulty"] = "Normal" if int(y_pred[0]) == 1 else "Faulty"  # Labels are reversed in model
     if prob_faulty is not None:
+        # Since labels are reversed, we need to flip the probability
+        prob_faulty = 1.0 - prob_faulty  # Reverse the probability
         confidence = prob_faulty if label == "Faulty" else (1.0 - prob_faulty)
         return {
             "prediction": label,
@@ -225,8 +194,8 @@ def predict(params: NetworkParams) -> dict:
         }
 
 
-if __name__ == "__main__":
-    # Optional: run with `python app.py` (uses the same command as above programmatically)
+if __name__ == "_main_":
+    # Optional: run with python app.py (uses the same command as above programmatically)
     import uvicorn
 
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

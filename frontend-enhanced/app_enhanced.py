@@ -1036,7 +1036,6 @@ with col1:
     if ok and isinstance(health, dict):
         status = health.get("status", "unknown")
         model_loaded = health.get("model_loaded", False)
-        scaler_loaded = health.get("scaler_loaded", False)
 
         # Health metrics grid
         metrics_html = f"""
@@ -1052,12 +1051,6 @@ with col1:
                 <div class="metric-label">ML Model</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value" style="color: {"#3fb950" if scaler_loaded else "#f85149"}">
-                    {"LOADED" if scaler_loaded else "ERROR"}
-                </div>
-                <div class="metric-label">Data Scaler</div>
-            </div>
-            <div class="metric-card">
                 <div class="metric-value text-gradient">{health.get("expected_feature_count", 0)}</div>
                 <div class="metric-label">Features</div>
             </div>
@@ -1066,7 +1059,7 @@ with col1:
         st.markdown(metrics_html, unsafe_allow_html=True)
 
         # Status badges
-        if status == "ok" and model_loaded and scaler_loaded:
+        if status == "ok" and model_loaded:
             st.markdown(
                 '<div class="status-badge badge-success pulse">🟢 System Ready</div>',
                 unsafe_allow_html=True,
@@ -1350,23 +1343,23 @@ with input_tab2:
             # Set predicting state
             st.session_state.is_predicting = True
             
-            # Store in form values for display (convert back to approximate raw values for display)
+            # Extract actual values from JSON and store for display
             st.session_state.form_values.update({
-                'rssi': -75.0,  # Placeholder - actual scaled value used
-                'sinr': 18.0,
-                'throughput': 95.0,
-                'latency': 15.0,
-                'jitter': 3.0,
-                'packet_loss': 0.5,
-                'cpu': 65.0,
-                'memory': 60.0,
-                'temperature': 45.0,
-                'active_users': 350,
-                'hour': 14,
-                'day_of_week': 3,
-                'is_peak_hour': 1,
-                'network_quality_score': 0.75,
-                'resource_stress': 65.0
+                'rssi': json_data.get('RSSI', -75.0),
+                'sinr': json_data.get('SINR', 18.0),
+                'throughput': json_data.get('throughput', 95.0),
+                'latency': json_data.get('latency', 15.0),
+                'jitter': json_data.get('jitter', 3.0),
+                'packet_loss': json_data.get('packet_loss', 0.5),
+                'cpu': json_data.get('cpu_usage_percent', 65.0),
+                'memory': json_data.get('memory_usage_percent', 60.0),
+                'temperature': json_data.get('temperature_celsius', 45.0),
+                'active_users': json_data.get('active_users', 350),
+                'hour': json_data.get('hour', 14),
+                'day_of_week': json_data.get('day_of_week', 3),
+                'is_peak_hour': json_data.get('is_peak_hour', 1),
+                'network_quality_score': json_data.get('network_quality_score', 0.75),
+                'resource_stress': json_data.get('resource_stress', 65.0)
             })
             
         except json.JSONDecodeError as e:
