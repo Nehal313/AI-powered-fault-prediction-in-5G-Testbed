@@ -271,3 +271,12 @@ with open("xgb_performance_report.txt", "w") as f:
     f.write(f"\nValidation Accuracy: {accuracy_score(y_test, y_pred_xgb):.3f}\n")
 
 print("\n Performance reports saved: rf_performance_report.txt, xgb_performance_report.txt")
+
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Save it for real-time use
+joblib.dump(scaler, "scaler.pkl")
